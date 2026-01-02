@@ -40,6 +40,11 @@ const Footer = () => {
                 </Link>
               </li>
               <li>
+                <Link to="/about" className="hover:text-primary-foreground transition-colors">
+                  About Us
+                </Link>
+              </li>
+              <li>
                 <Link to="/auth?mode=register" className="hover:text-primary-foreground transition-colors">
                   Start Earning
                 </Link>
