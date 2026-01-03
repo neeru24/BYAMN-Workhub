@@ -1,9 +1,10 @@
+// File: src/components/auth/LoginForm.tsx
 "use client";
 
 import { useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { signInWithEmailAndPassword } from "firebase/auth";
-import { auth } from "@/lib/firebase"; // tumhara existing firebase.ts import
+import { auth } from "@/lib/firebase"; // Firebase config import
 
 export default function LoginForm() {
   const [email, setEmail] = useState("");
@@ -18,7 +19,7 @@ export default function LoginForm() {
 
     // Input validation
     if (!email.includes("@")) {
-      setError("Please enter a valid email.");
+      setError("Please enter a valid email address.");
       return;
     }
     if (password.length < 6) {
@@ -31,8 +32,7 @@ export default function LoginForm() {
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       console.log("User logged in:", userCredential.user);
-      // Redirect or show success
-      alert("Login successful!"); // Replace with your redirect logic
+      alert("Login successful!"); // Replace with redirect logic
     } catch (err: any) {
       console.error(err);
       switch (err.code) {
@@ -59,9 +59,8 @@ export default function LoginForm() {
   return (
     <div className="max-w-md mx-auto mt-10 p-6 border rounded-lg shadow-md bg-white">
       <h2 className="text-2xl font-semibold mb-6 text-center">Login</h2>
-
       <form onSubmit={handleSubmit} className="space-y-4 relative">
-        {/* Email Field */}
+        {/* Email */}
         <div>
           <label className="block mb-1 font-medium">Email</label>
           <input
@@ -74,7 +73,7 @@ export default function LoginForm() {
           />
         </div>
 
-        {/* Password Field */}
+        {/* Password */}
         <div className="relative">
           <label className="block mb-1 font-medium">Password</label>
           <input
@@ -94,10 +93,10 @@ export default function LoginForm() {
           </button>
         </div>
 
-        {/* Error Message */}
+        {/* Error */}
         {error && <p className="text-red-500">{error}</p>}
 
-        {/* Submit Button */}
+        {/* Submit */}
         <button
           type="submit"
           disabled={isLoading}
@@ -112,7 +111,7 @@ export default function LoginForm() {
         </button>
       </form>
 
-      {/* Optional: Forgot Password Link */}
+      {/* Optional Forgot Password */}
       <p className="mt-4 text-sm text-center text-gray-600">
         Forgot your password?{" "}
         <a href="/forgot-password" className="text-indigo-600 hover:underline">
@@ -121,4 +120,6 @@ export default function LoginForm() {
       </p>
     </div>
   );
+}
+
 }
