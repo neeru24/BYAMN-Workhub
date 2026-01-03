@@ -39,6 +39,18 @@ export function isValidEmail(email: string): boolean {
   return emailRegex.test(email);
 }
 
+export function isValidPassword(password: string): boolean {
+  // Password must be at least 6 characters long and contain at least one letter and one number
+  const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d@$!%*#?&]{6,}$/;
+  return passwordRegex.test(password);
+}
+
+export function isValidName(name: string): boolean {
+  // Names should only contain letters, spaces, hyphens, and apostrophes
+  const nameRegex = /^[a-zA-Z\s\-']+$/;
+  return nameRegex.test(name) && name.trim().length >= 2 && name.trim().length <= 50;
+}
+
 import { type ClassValue, clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
 

@@ -10,7 +10,8 @@ import {
 } from 'firebase/auth';
 import { ref, set, get, child, update } from 'firebase/database';
 import { auth, database } from '@/lib/firebase';
-import { sanitizeInput, isValidUrl } from '@/lib/utils';
+import { sanitizeInput, isValidUrl, isValidEmail, isValidPassword, isValidName } from '@/lib/utils';
+import { dataCache } from '@/lib/data-cache';
 
 interface UserProfile {
   uid: string;
@@ -90,15 +91,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const signUp = async (email: string, password: string, fullName: string) => {
+    // Validate inputs before creating user
+    if (!isValidEmail(email)) {
+      throw new Error('Please enter a valid email address');
+    }
+    
+    if (!isValidPassword(password)) {
+      throw new Error('Password must be at least 6 characters and contain at least one letter and one number');
+    }
+    
+    if (!isValidName(fullName)) {
+      throw new Error('Full name must contain only letters, spaces, hyphens, and apostrophes, and be between 2-50 characters');
+    }
+
     const { user } = await createUserWithEmailAndPassword(auth, email, password);
     await sendEmailVerification(user);
     
     const newProfile: UserProfile = {
       uid: user.uid,
       email: email,
-      fullName: fullName,
+      fullName: sanitizeInput(fullName),
       bio: '',
       socialLinks: {},
+      profileImage: undefined,
       role: 'user',
       isBlocked: false,
       createdAt: Date.now(),
@@ -117,6 +132,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       pendingAddMoney: 0,
       totalWithdrawn: 0,
     });
+    
+    // Set profile in cache
+    dataCache.set(`user:${user.uid}`, newProfile);
     
     setProfile(newProfile);
   };
