@@ -9,7 +9,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog,
   DialogContent,
@@ -24,15 +23,27 @@ import {
   Plus, 
   ArrowUpRight,
   IndianRupee,
-  Clock,
-  CheckCircle2,
-  XCircle,
   TrendingUp,
   History,
   AlertTriangle,
-  Loader2
+  Loader2,
+  BarChart3,
+  PieChart,
+  TrendingDown,
+  ArrowDown,
+  ArrowUp,
+  Filter,
+  Settings as SettingsIcon,
+  Download
 } from 'lucide-react';
 import { z } from 'zod';
+import { 
+  fetchWalletData, 
+  fetchTransactions,
+  invalidateUserCache,
+  dataCache,
+  createTransactionAndAdjustWallet
+} from '@/lib/data-cache';
 
 interface WalletData {
   earnedBalance: number;
@@ -71,6 +82,7 @@ const Wallet = () => {
   const [addMoneyOpen, setAddMoneyOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const [addMoneyForm, setAddMoneyForm] = useState({
     amount: '',
@@ -83,21 +95,23 @@ const Wallet = () => {
   });
 
   useEffect(() => {
-    const fetchWalletData = async () => {
+    const fetchWalletAndTransactions = async () => {
       if (!profile?.uid) return;
 
       try {
-        // Fetch wallet
-        const walletSnap = await get(ref(database, `wallets/${profile.uid}`));
-        if (walletSnap.exists()) {
-          setWallet(walletSnap.val());
+        setLoading(true);
+        setError(null);
+
+        // Fetch wallet data
+        const walletData = await fetchWalletData(profile.uid);
+        if (walletData) {
+          setWallet(walletData);
         }
 
         // Fetch transactions
-        const transSnap = await get(ref(database, `transactions/${profile.uid}`));
-        if (transSnap.exists()) {
-          const data = transSnap.val();
-          const transArray: Transaction[] = Object.entries(data)
+        const transactionsData = await fetchTransactions(profile.uid);
+        if (transactionsData) {
+          const transArray: Transaction[] = Object.entries(transactionsData)
             .map(([id, trans]: [string, any]) => ({
               id,
               ...trans,
@@ -107,12 +121,21 @@ const Wallet = () => {
         }
       } catch (error) {
         console.error('Error fetching wallet:', error);
+        setError('Failed to load wallet data. Please try again later.');
+        // Set default values
+        setWallet({
+          earnedBalance: 0,
+          addedBalance: 0,
+          pendingAddMoney: 0,
+          totalWithdrawn: 0
+        });
+        setTransactions([]);
       } finally {
         setLoading(false);
       }
     };
 
-    fetchWalletData();
+    fetchWalletAndTransactions();
   }, [profile?.uid]);
 
   const handleAddMoney = async () => {
@@ -172,16 +195,20 @@ const Wallet = () => {
         }
       }
 
-      // Create transaction
-      const transRef = push(ref(database, `transactions/${profile.uid}`));
-      await set(transRef, {
+      // Create transaction and adjust wallet atomically
+      const transaction = {
         type: 'add_money',
         amount,
         status: 'pending',
         description: 'Add money request',
         upiTransactionId: addMoneyForm.upiTransactionId,
         createdAt: Date.now(),
-      });
+      };
+
+      // Update wallet to reflect pending add money
+      await createTransactionAndAdjustWallet(profile.uid, transaction, {
+        pendingAddMoney: amount
+      }, profile.uid);
 
       // Create admin request
       const requestRef = push(ref(database, 'adminRequests/addMoney'));
@@ -193,7 +220,7 @@ const Wallet = () => {
         upiTransactionId: addMoneyForm.upiTransactionId,
         status: 'pending',
         createdAt: Date.now(),
-        transactionId: transRef.key,
+        transactionId: requestRef.key, // Use the admin request ID as transactionId
       });
 
       toast({
@@ -204,9 +231,22 @@ const Wallet = () => {
       setAddMoneyOpen(false);
       setAddMoneyForm({ amount: '', upiTransactionId: '' });
       
-      // Refresh data
-      const walletSnap = await get(ref(database, `wallets/${profile.uid}`));
-      if (walletSnap.exists()) setWallet(walletSnap.val());
+      // Refetch data
+      const updatedWallet = await fetchWalletData(profile.uid);
+      if (updatedWallet) {
+        setWallet(updatedWallet);
+      }
+      
+      const updatedTransactions = await fetchTransactions(profile.uid);
+      if (updatedTransactions) {
+        const transArray: Transaction[] = Object.entries(updatedTransactions)
+          .map(([id, trans]: [string, any]) => ({
+            id,
+            ...trans,
+          }))
+          .sort((a, b) => b.createdAt - a.createdAt);
+        setTransactions(transArray);
+      }
     } catch (error) {
       console.error('Error adding money:', error);
       toast({
@@ -285,16 +325,19 @@ const Wallet = () => {
         }
       }
 
-      // Create transaction
-      const transRef = push(ref(database, `transactions/${profile.uid}`));
-      await set(transRef, {
+      // Create transaction and adjust wallet atomically
+      const transaction = {
         type: 'withdrawal',
         amount,
         status: 'pending',
         description: 'Withdrawal request',
         upiId: withdrawForm.upiId,
         createdAt: Date.now(),
-      });
+      };
+
+      await createTransactionAndAdjustWallet(profile.uid, transaction, {
+        earnedBalance: -amount // Deduct from earned balance
+      }, profile.uid);
 
       // Create admin request
       const requestRef = push(ref(database, 'adminRequests/withdrawals'));
@@ -306,7 +349,7 @@ const Wallet = () => {
         upiId: withdrawForm.upiId,
         status: 'pending',
         createdAt: Date.now(),
-        transactionId: transRef.key,
+        transactionId: requestRef.key, // Use the admin request ID as transactionId
       });
 
       toast({
@@ -316,6 +359,23 @@ const Wallet = () => {
 
       setWithdrawOpen(false);
       setWithdrawForm({ amount: '', upiId: '' });
+      
+      // Refetch data
+      const updatedWallet = await fetchWalletData(profile.uid);
+      if (updatedWallet) {
+        setWallet(updatedWallet);
+      }
+      
+      const updatedTransactions = await fetchTransactions(profile.uid);
+      if (updatedTransactions) {
+        const transArray: Transaction[] = Object.entries(updatedTransactions)
+          .map(([id, trans]: [string, any]) => ({
+            id,
+            ...trans,
+          }))
+          .sort((a, b) => b.createdAt - a.createdAt);
+        setTransactions(transArray);
+      }
     } catch (error) {
       console.error('Error withdrawing:', error);
       toast({
@@ -359,33 +419,74 @@ const Wallet = () => {
 
   const totalBalance = (wallet?.earnedBalance || 0) + (wallet?.addedBalance || 0);
 
+  const transactionStats = {
+    earnings: transactions.filter(t => t.type === 'earning').reduce((sum, t) => sum + t.amount, 0),
+    withdrawals: transactions.filter(t => t.type === 'withdrawal').reduce((sum, t) => sum + t.amount, 0),
+    added: transactions.filter(t => t.type === 'add_money').reduce((sum, t) => sum + t.amount, 0),
+  };
+
+  if (loading && !profile) {
+    return (
+      <div className="min-h-screen flex flex-col bg-gradient-to-b from-background to-muted">
+        <Navbar />
+        <main className="flex-1 container mx-auto px-4 py-8 flex items-center justify-center">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+            <p className="text-muted-foreground">Loading wallet...</p>
+          </div>
+        </main>
+        <Footer />
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen flex flex-col bg-background">
+    <div className="min-h-screen flex flex-col bg-gradient-to-b from-background to-muted">
       <Navbar />
       
       <main className="flex-1 container mx-auto px-4 py-8">
-        <h1 className="font-display text-3xl font-bold text-foreground mb-8">
-          My Wallet
-        </h1>
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h1 className="font-display text-4xl font-bold text-foreground">
+              My Wallet
+            </h1>
+            <p className="text-muted-foreground">Manage your funds and transactions</p>
+          </div>
+          <div className="flex gap-3">
+            <Button variant="outline" size="sm">
+              <Filter className="h-4 w-4 mr-2" />
+              Filter
+            </Button>
+            <Button variant="outline" size="sm">
+              <SettingsIcon className="h-4 w-4 mr-2" />
+              Settings
+            </Button>
+          </div>
+        </div>
 
         {/* Balance Cards */}
-        <div className="grid md:grid-cols-3 gap-4 mb-8">
-          <Card className="bg-gradient-primary text-primary-foreground">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          <Card className="overflow-hidden hover:shadow-lg transition-shadow">
+            <div className="h-2 bg-gradient-to-r from-primary to-accent"></div>
             <CardContent className="pt-6">
               <div className="flex items-start justify-between">
                 <div>
-                  <p className="text-sm text-primary-foreground/80 mb-1">Total Balance</p>
-                  <p className="font-display text-3xl font-bold flex items-center">
+                  <p className="text-sm text-muted-foreground mb-1">Total Balance</p>
+                  <p className="font-display text-3xl font-bold text-foreground flex items-center">
                     <IndianRupee className="h-6 w-6" />
                     {totalBalance.toFixed(2)}
                   </p>
+                  <p className="text-xs text-muted-foreground mt-1">Available for use</p>
                 </div>
-                <WalletIcon className="h-8 w-8 text-primary-foreground/50" />
+                <div className="p-3 rounded-lg bg-gradient-to-r from-primary to-accent flex items-center justify-center">
+                  <WalletIcon className="h-6 w-6 text-white" />
+                </div>
               </div>
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="overflow-hidden hover:shadow-lg transition-shadow">
+            <div className="h-2 bg-gradient-to-r from-success to-emerald-500"></div>
             <CardContent className="pt-6">
               <div className="flex items-start justify-between">
                 <div>
@@ -396,12 +497,15 @@ const Wallet = () => {
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">Available for withdrawal</p>
                 </div>
-                <TrendingUp className="h-6 w-6 text-success/50" />
+                <div className="p-3 rounded-lg bg-gradient-to-r from-success to-emerald-500 flex items-center justify-center">
+                  <TrendingUp className="h-6 w-6 text-white" />
+                </div>
               </div>
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="overflow-hidden hover:shadow-lg transition-shadow">
+            <div className="h-2 bg-gradient-to-r from-blue-500 to-cyan-500"></div>
             <CardContent className="pt-6">
               <div className="flex items-start justify-between">
                 <div>
@@ -412,7 +516,28 @@ const Wallet = () => {
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">For creating campaigns</p>
                 </div>
-                <Plus className="h-6 w-6 text-primary/50" />
+                <div className="p-3 rounded-lg bg-gradient-to-r from-blue-500 to-cyan-500 flex items-center justify-center">
+                  <Plus className="h-6 w-6 text-white" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="overflow-hidden hover:shadow-lg transition-shadow">
+            <div className="h-2 bg-gradient-to-r from-purple-500 to-indigo-500"></div>
+            <CardContent className="pt-6">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">Total Withdrawn</p>
+                  <p className="font-display text-2xl font-bold text-purple-500 flex items-center">
+                    <IndianRupee className="h-5 w-5" />
+                    {(wallet?.totalWithdrawn || 0).toFixed(2)}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">Money withdrawn</p>
+                </div>
+                <div className="p-3 rounded-lg bg-gradient-to-r from-purple-500 to-indigo-500 flex items-center justify-center">
+                  <ArrowUpRight className="h-6 w-6 text-white" />
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -422,8 +547,8 @@ const Wallet = () => {
         <div className="flex flex-wrap gap-4 mb-8">
           <Dialog open={addMoneyOpen} onOpenChange={setAddMoneyOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2">
-                <Plus className="h-4 w-4" />
+              <Button className="gap-2 px-6 py-6 text-lg">
+                <Plus className="h-5 w-5" />
                 Add Money
               </Button>
             </DialogTrigger>
@@ -471,8 +596,8 @@ const Wallet = () => {
 
           <Dialog open={withdrawOpen} onOpenChange={setWithdrawOpen}>
             <DialogTrigger asChild>
-              <Button variant="outline" className="gap-2">
-                <ArrowUpRight className="h-4 w-4" />
+              <Button variant="outline" className="gap-2 px-6 py-6 text-lg">
+                <ArrowUpRight className="h-5 w-5" />
                 Withdraw
               </Button>
             </DialogTrigger>
@@ -531,28 +656,101 @@ const Wallet = () => {
           </Dialog>
         </div>
 
+        {/* Transaction Stats */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          <Card className="hover:shadow-lg transition-shadow">
+            <CardContent className="p-6">
+              <div className="flex items-center gap-3">
+                <div className="p-3 rounded-lg bg-success/10">
+                  <TrendingUp className="h-6 w-6 text-success" />
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Total Earnings</p>
+                  <p className="font-display text-xl font-bold text-success">
+                    <IndianRupee className="h-4 w-4 inline" />
+                    {transactionStats.earnings.toFixed(2)}
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="hover:shadow-lg transition-shadow">
+            <CardContent className="p-6">
+              <div className="flex items-center gap-3">
+                <div className="p-3 rounded-lg bg-destructive/10">
+                  <ArrowUpRight className="h-6 w-6 text-destructive" />
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Total Withdrawn</p>
+                  <p className="font-display text-xl font-bold text-destructive">
+                    <IndianRupee className="h-4 w-4 inline" />
+                    {transactionStats.withdrawals.toFixed(2)}
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="hover:shadow-lg transition-shadow">
+            <CardContent className="p-6">
+              <div className="flex items-center gap-3">
+                <div className="p-3 rounded-lg bg-primary/10">
+                  <Plus className="h-6 w-6 text-primary" />
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Total Added</p>
+                  <p className="font-display text-xl font-bold text-primary">
+                    <IndianRupee className="h-4 w-4 inline" />
+                    {transactionStats.added.toFixed(2)}
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
         {/* Transaction History */}
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="flex items-center gap-2">
               <History className="h-5 w-5" />
               Transaction History
             </CardTitle>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm">
+                <Filter className="h-4 w-4 mr-2" />
+                Filter
+              </Button>
+              <Button variant="outline" size="sm">
+                <Download className="h-4 w-4 mr-2" />
+                Export
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
-            {transactions.length === 0 ? (
-              <div className="text-center py-8">
-                <History className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
-                <p className="text-muted-foreground">No transactions yet</p>
+            {error && (
+              <div className="text-center py-12">
+                <History className="h-16 w-16 text-destructive/30 mx-auto mb-4" />
+                <p className="text-destructive text-lg mb-2">Error Loading Transactions</p>
+                <p className="text-muted-foreground mb-4">{error}</p>
+                <Button onClick={() => window.location.reload()}>Retry</Button>
+              </div>
+            )}
+            {!error && transactions.length === 0 ? (
+              <div className="text-center py-12">
+                <History className="h-16 w-16 text-muted-foreground/30 mx-auto mb-4" />
+                <p className="text-lg text-muted-foreground mb-2">No transactions yet</p>
+                <p className="text-muted-foreground">Your transaction history will appear here</p>
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-4">
                 {transactions.map((trans) => (
                   <div
                     key={trans.id}
-                    className="flex items-center gap-4 p-4 rounded-lg bg-muted/50"
+                    className="flex items-center gap-4 p-4 rounded-lg bg-muted/50 hover:bg-muted/70 transition-colors"
                   >
-                    <div className="h-10 w-10 rounded-lg bg-background flex items-center justify-center">
+                    <div className="h-12 w-12 rounded-lg bg-background flex items-center justify-center">
                       {getTransactionIcon(trans.type)}
                     </div>
                     <div className="flex-1 min-w-0">
@@ -566,7 +764,7 @@ const Wallet = () => {
                         trans.type === 'earning' ? 'text-success' : 
                         trans.type === 'withdrawal' ? 'text-destructive' : 'text-foreground'
                       }`}>
-                        {trans.type === 'earning' ? '+' : trans.type === 'withdrawal' ? '-' : ''}
+                        {trans.type === 'earning' ? '+' : trans.type === 'withdrawal' ? '-' : ''} 
                         <IndianRupee className="h-3 w-3" />
                         {trans.amount.toFixed(2)}
                       </p>
