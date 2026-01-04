@@ -526,6 +526,119 @@ export const processMoneyRequest = async (
   }
 };
 
+// Utility function for applying to a campaign
+export const applyToCampaign = async (
+  campaignId: string,
+  userId: string,
+  userName: string,
+  reward: number,
+  currentUserId?: string
+): Promise<boolean> => {
+  // Verify user authorization
+  if (currentUserId && currentUserId !== userId) {
+    throw new Error('Unauthorized: You can only apply to campaigns for yourself');
+  }
+
+  const campaignRef = ref(database, `campaigns/${campaignId}`);
+  const workRef = ref(database, `works/${userId}/${campaignId}`);
+
+  try {
+    // Check if user has already applied
+    const workSnap = await get(workRef);
+    if (workSnap.exists()) {
+      throw new Error('You have already applied to this campaign');
+    }
+
+    // Get campaign data to check availability
+    const campaignSnap = await get(campaignRef);
+    if (!campaignSnap.exists()) {
+      throw new Error('Campaign does not exist');
+    }
+
+    const campaignData = campaignSnap.val();
+    if (campaignData.status !== 'active') {
+      throw new Error('Campaign is not active');
+    }
+
+    if (campaignData.completedWorkers >= campaignData.totalWorkers) {
+      throw new Error('Campaign is full');
+    }
+
+    // Create work entry
+    const workData = {
+      id: campaignId,
+      userId,
+      userName,
+      campaignId,
+      proofUrl: '',
+      status: 'pending',
+      submittedAt: Date.now(),
+      reward,
+    };
+
+    await set(workRef, workData);
+
+    // Update campaign completed workers count
+    await update(campaignRef, {
+      completedWorkers: campaignData.completedWorkers + 1
+    });
+
+    // Invalidate cache
+    dataCache.clear(`works:${userId}`);
+    dataCache.clear(`campaigns:all`);
+    dataCache.clear(`campaign:${campaignId}`);
+
+    return true;
+  } catch (error) {
+    console.error('Error applying to campaign:', error);
+    throw error;
+  }
+};
+
+// Utility function for submitting work for a campaign
+export const submitWorkForCampaign = async (
+  campaignId: string,
+  userId: string,
+  proofUrl: string,
+  currentUserId?: string
+): Promise<boolean> => {
+  // Verify user authorization
+  if (currentUserId && currentUserId !== userId) {
+    throw new Error('Unauthorized: You can only submit work for yourself');
+  }
+
+  const workRef = ref(database, `works/${userId}/${campaignId}`);
+
+  try {
+    // Verify work exists
+    const workSnap = await get(workRef);
+    if (!workSnap.exists()) {
+      throw new Error('You have not applied to this campaign');
+    }
+
+    const workData = workSnap.val();
+    if (workData.status !== 'pending' && workData.status !== 'rejected') {
+      throw new Error('Work has already been submitted and is awaiting review');
+    }
+
+    // Update work with proof
+    await update(workRef, {
+      proofUrl,
+      status: 'pending',
+      submittedAt: Date.now(),
+    });
+
+    // Invalidate cache
+    dataCache.clear(`works:${userId}`);
+    dataCache.clear(`works:${userId}:${campaignId}`);
+
+    return true;
+  } catch (error) {
+    console.error('Error submitting work:', error);
+    throw error;
+  }
+};
+
 // Utility functions for common data fetching operations
 export const fetchUserData = async (uid: string): Promise<any> => {
   const cacheKey = `user:${uid}`;
