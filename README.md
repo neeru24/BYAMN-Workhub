@@ -1,5 +1,7 @@
 # 🚀 BYAMN WorkHub
-
+# admin panel Credincials 
+Email admin1@gmail.com
+password 113114
 🌐 Website: https://byamn-workhub.vercel.app/
 
 BYAMN WorkHub is an open-source, micro-task and campaign-based platform designed to help students and early learners gain real-world experience by completing verified tasks. Organizations can create campaigns, and contributors can complete tasks to earn rewards after manual verification.
