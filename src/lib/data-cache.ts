@@ -1170,6 +1170,23 @@ export const fetchTimeBasedLeaderboard = async (
     return cached;
   }
 
+  // Fetch from database based on period
+  try {
+    const leaderboardRef = ref(database, `leaderboards/${period}`);
+    const snapshot = await get(leaderboardRef);
+    
+    if (snapshot.exists()) {
+      const data = snapshot.val();
+      dataCache.set(cacheKey, data);
+      return data;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error(`Error fetching ${period} leaderboard:`, error);
+    throw error;
+  }
+};
 
 // Validation functions
 const validateWalletData = (data: any): data is WalletBalance => {
