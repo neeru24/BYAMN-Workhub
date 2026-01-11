@@ -1,14 +1,5 @@
 import { ref, get, runTransaction, update, push, set } from 'firebase/database';
 import { database } from './firebase';
-import {
-  validateWalletData,
-  validateCampaignData,
-  validateTransactionData,
-  validateUserAuthorization,
-  validateWorkData,
-  validateMoneyRequestData,
-  validateAmount
-} from './validation';
 
 // Cache configuration
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
@@ -208,9 +199,14 @@ export const dataCache = new DataCache();
 // Verify user authorization
 const verifyUserAuthorization = async (currentUserId: string, targetUserId: string, requiredRole?: 'admin'): Promise<boolean> => {
   try {
-    // Validate input parameters using the imported function
-    if (!validateUserAuthorization(currentUserId, targetUserId, requiredRole)) {
-      console.error('Invalid authorization parameters');
+    // Validate input parameters
+    if (!currentUserId || typeof currentUserId !== 'string') {
+      console.error('Invalid currentUserId provided for authorization check');
+      return false;
+    }
+    
+    if (!targetUserId || typeof targetUserId !== 'string') {
+      console.error('Invalid targetUserId provided for authorization check');
       return false;
     }
     
@@ -623,9 +619,9 @@ export const approveWorkAndCredit = async (
       throw new Error('Work is not in pending status');
     }
     
-    // Validate work data using imported validation function
-    if (!validateWorkData(workData)) {
-      throw new Error('Invalid work data');
+    // Validate work data
+    if (typeof workData.reward !== 'number' || workData.reward <= 0 || workData.reward > 10000) {
+      throw new Error('Invalid reward in work data');
     }
     
     // Update work status atomically
@@ -634,9 +630,9 @@ export const approveWorkAndCredit = async (
         return undefined; // Abort if work doesn't exist or is not pending
       }
       
-      // Validate work data during transaction using imported validation function
-      if (!validateWorkData(currentData)) {
-        console.error('Invalid work data during transaction:', currentData);
+      // Validate work data during transaction
+      if (typeof currentData.reward !== 'number' || currentData.reward <= 0 || currentData.reward > 10000) {
+        console.error('Invalid reward in work data during transaction:', currentData);
         return undefined; // Abort transaction
       }
       
@@ -976,9 +972,9 @@ export const applyToCampaign = async (
       reward,
     };
     
-    // Validate work data before creating using imported validation function
-    if (!validateWorkData(workData)) {
-      throw new Error('Invalid work data');
+    // Validate work data before creating
+    if (typeof workData.reward !== 'number' || workData.reward <= 0 || workData.reward > 10000) {
+      throw new Error('Invalid reward in work data');
     }
 
     await set(workRef, workData);
@@ -1052,9 +1048,9 @@ export const submitWorkForCampaign = async (
       throw new Error('Work has already been submitted and is awaiting review');
     }
     
-    // Validate work data using imported validation function
-    if (!validateWorkData(workData)) {
-      throw new Error('Invalid work data');
+    // Validate work data
+    if (typeof workData.reward !== 'number' || workData.reward <= 0 || workData.reward > 10000) {
+      throw new Error('Invalid reward in work data');
     }
 
     // Update work with proof
@@ -1122,9 +1118,9 @@ export const rejectWorkAndRestoreCampaignBudget = async (
       throw new Error('Work is not in pending status');
     }
     
-    // Validate work data using imported validation function
-    if (!validateWorkData(workData)) {
-      throw new Error('Invalid work data');
+    // Validate work data
+    if (typeof workData.reward !== 'number' || workData.reward <= 0 || workData.reward > 10000) {
+      throw new Error('Invalid reward in work data');
     }
 
     // Update work status to rejected
@@ -1170,22 +1166,87 @@ export const fetchTimeBasedLeaderboard = async (
     return cached;
   }
 
-  // Fetch from database based on period
-  try {
-    const leaderboardRef = ref(database, `leaderboards/${period}`);
-    const snapshot = await get(leaderboardRef);
-    
-    if (snapshot.exists()) {
-      const data = snapshot.val();
-      dataCache.set(cacheKey, data);
-      return data;
-    }
-    
-    return null;
-  } catch (error) {
-    console.error(`Error fetching ${period} leaderboard:`, error);
-    throw error;
+  // Check if already fetching
+  if (dataCache.isFetching(cacheKey)) {
+    return dataCache.getPending(cacheKey);
   }
+
+  // Fetch data
+  const promise = Promise.all([
+    get(ref(database, 'users')),
+    get(ref(database, 'works'))
+  ])
+    .then(async ([usersSnap, worksSnap]) => {
+      if (!usersSnap.exists() || !worksSnap.exists()) {
+        return [];
+      }
+
+      const usersData = usersSnap.val();
+      const worksData = worksSnap.val();
+      
+      // Calculate time thresholds
+      const now = Date.now();
+      let timeThreshold = 0;
+      
+      switch (period) {
+        case 'daily':
+          timeThreshold = now - (24 * 60 * 60 * 1000); // 24 hours ago
+          break;
+        case 'weekly':
+          timeThreshold = now - (7 * 24 * 60 * 60 * 1000); // 7 days ago
+          break;
+        case 'monthly':
+          timeThreshold = now - (30 * 24 * 60 * 60 * 1000); // 30 days ago
+          break;
+      }
+
+      // Process works to count approved works by user and time period
+      const userWorkCounts: Record<string, number> = {};
+      
+      for (const [userId, userWorks] of Object.entries(worksData)) {
+        if (typeof userWorks === 'object' && userWorks !== null) {
+          for (const [workId, workData] of Object.entries(userWorks as Record<string, any>)) {
+            const work = workData as any;
+            // Validate work data before processing
+            if (work && work.status === 'approved' && 
+                typeof work.submittedAt === 'number' && 
+                work.submittedAt > timeThreshold &&
+                work.submittedAt <= now + 60000) { // Allow 1 min future drift
+              if (!userWorkCounts[userId]) {
+                userWorkCounts[userId] = 0;
+              }
+              userWorkCounts[userId]++; 
+            }
+          }
+        }
+      }
+
+      // Create leaderboard array
+      const leaderboard = Object.entries(usersData)
+        .map(([uid, userData]: [string, any]) => ({
+          uid,
+          fullName: typeof userData.fullName === 'string' ? userData.fullName : 'Unknown',
+          profileImage: typeof userData.profileImage === 'string' ? userData.profileImage : null,
+          approvedWorks: typeof userWorkCounts[uid] === 'number' ? userWorkCounts[uid] : 0,
+        }))
+        .filter((user: any) => user.approvedWorks > 0)
+        .sort((a: any, b: any) => b.approvedWorks - a.approvedWorks)
+        .slice(0, 50)
+        .map((user: any, index: number) => ({ ...user, rank: index + 1 }));
+
+      dataCache.set(cacheKey, leaderboard);
+      return leaderboard;
+    })
+    .catch((error) => {
+      console.error(`Error fetching ${period} leaderboard:`, error);
+      throw error;
+    })
+    .finally(() => {
+      dataCache.clearPending(cacheKey);
+    });
+
+  dataCache.setPending(cacheKey, promise);
+  return promise;
 };
 
 // Validation functions
@@ -1231,11 +1292,6 @@ const validateTransactionData = (data: any): data is any => {
     typeof data.createdAt === 'number' && data.createdAt >= 0
   );
 };
-
-
-// Validation functions
-
-
 
 // Utility functions for common data fetching operations
 export const fetchUserData = async (uid: string): Promise<any> => {
@@ -1467,8 +1523,7 @@ export const clearUserCache = (uid: string): void => {
 };
 
 // Utility function to fetch time-based leaderboard data
-const fetchTimeBasedLeaderboardV2 = async (
-timeframe: 'daily' | 'weekly' | 'monthly'): Promise<any[]> => {
+export const fetchTimeBasedLeaderboard = async (timeframe: 'daily' | 'weekly' | 'monthly'): Promise<any[]> => {
   // Validate input parameter
   if (!timeframe || !['daily', 'weekly', 'monthly'].includes(timeframe)) {
     throw new Error('Invalid timeframe provided. Must be daily, weekly, or monthly');
