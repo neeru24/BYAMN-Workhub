@@ -63,9 +63,9 @@ const Navbar = () => {
 
   const navLinks = [
     { path: '/', label: 'Home', icon: Home },
+    { path: '/about', label: 'About', icon: Users },
     { path: '/campaigns', label: 'Campaigns', icon: Briefcase },
     { path: '/leaderboard', label: 'Leaderboard', icon: Trophy },
-    { path: '/about', label: 'About', icon: Users },
   ];
 
   const userLinks = [
@@ -82,7 +82,7 @@ const Navbar = () => {
     }`}>
       <div className="container mx-auto px-4">
         <div className="flex h-16 items-center justify-between">
-          {/* Logo and Home Button */}
+          {/* Logo */}
           <div className="flex items-center gap-4">
             <Link to="/" className="flex items-center gap-2">
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-r from-primary to-accent">
@@ -91,14 +91,6 @@ const Navbar = () => {
               <span className="font-display text-xl font-bold text-foreground">
                 BYAMN <span className="text-accent">WorkHub</span>
               </span>
-            </Link>
-            
-            {/* Home Button */}
-            <Link to="/">
-              <Button variant="ghost" size="sm" className="hidden md:flex items-center gap-2">
-                <Home className="h-4 w-4" />
-                Home
-              </Button>
             </Link>
           </div>
 
@@ -124,29 +116,6 @@ const Navbar = () => {
 
           {/* Right Side */}
           <div className="flex items-center gap-3">
-            {/* Search and Notification Icons - Hidden on mobile for now */}
-            <div className="hidden md:flex items-center gap-2">
-              <Button variant="ghost" size="icon" className="relative">
-                <Search className="h-4 w-4" />
-                <span className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-destructive text-destructive-foreground text-xs flex items-center justify-center">
-                  3
-                </span>
-              </Button>
-              <Button variant="ghost" size="icon">
-                <Bell className="h-4 w-4" />
-              </Button>
-            </div>
-
-            {/* Theme Toggle */}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-              className="hidden md:flex"
-            >
-              {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            </Button>
-
             {user ? (
               <>
                 <Link to="/campaigns/create">

@@ -1,3 +1,4 @@
+ feature/debounced-search-work-listings
 import { useEffect, useState } from 'react';
 
 export function useDebounce<T>(value: T, delay?: number): T {
@@ -9,6 +10,19 @@ export function useDebounce<T>(value: T, delay?: number): T {
     return () => {
       clearTimeout(timer);
     };
+
+import { useState, useEffect } from 'react';
+
+export function useDebounce<T>(value: T, delay: number): T {
+  const [debouncedValue, setDebouncedValue] = useState<T>(value);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+
+    return () => clearTimeout(handler);
+
   }, [value, delay]);
 
   return debouncedValue;

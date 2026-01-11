@@ -1,14 +1,5 @@
 import { ref, get, runTransaction, update, push, set } from 'firebase/database';
 import { database } from './firebase';
-import {
-  validateWalletData,
-  validateCampaignData,
-  validateTransactionData,
-  validateUserAuthorization,
-  validateWorkData,
-  validateMoneyRequestData,
-  validateAmount
-} from './validation';
 
 // Cache configuration
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
@@ -208,9 +199,14 @@ export const dataCache = new DataCache();
 // Verify user authorization
 const verifyUserAuthorization = async (currentUserId: string, targetUserId: string, requiredRole?: 'admin'): Promise<boolean> => {
   try {
-    // Validate input parameters using the imported function
-    if (!validateUserAuthorization(currentUserId, targetUserId, requiredRole)) {
-      console.error('Invalid authorization parameters');
+    // Validate input parameters
+    if (!currentUserId || typeof currentUserId !== 'string') {
+      console.error('Invalid currentUserId provided for authorization check');
+      return false;
+    }
+    
+    if (!targetUserId || typeof targetUserId !== 'string') {
+      console.error('Invalid targetUserId provided for authorization check');
       return false;
     }
     
@@ -623,9 +619,9 @@ export const approveWorkAndCredit = async (
       throw new Error('Work is not in pending status');
     }
     
-    // Validate work data using imported validation function
-    if (!validateWorkData(workData)) {
-      throw new Error('Invalid work data');
+    // Validate work data
+    if (typeof workData.reward !== 'number' || workData.reward <= 0 || workData.reward > 10000) {
+      throw new Error('Invalid reward in work data');
     }
     
     // Update work status atomically
@@ -634,9 +630,9 @@ export const approveWorkAndCredit = async (
         return undefined; // Abort if work doesn't exist or is not pending
       }
       
-      // Validate work data during transaction using imported validation function
-      if (!validateWorkData(currentData)) {
-        console.error('Invalid work data during transaction:', currentData);
+      // Validate work data during transaction
+      if (typeof currentData.reward !== 'number' || currentData.reward <= 0 || currentData.reward > 10000) {
+        console.error('Invalid reward in work data during transaction:', currentData);
         return undefined; // Abort transaction
       }
       
@@ -976,9 +972,9 @@ export const applyToCampaign = async (
       reward,
     };
     
-    // Validate work data before creating using imported validation function
-    if (!validateWorkData(workData)) {
-      throw new Error('Invalid work data');
+    // Validate work data before creating
+    if (typeof workData.reward !== 'number' || workData.reward <= 0 || workData.reward > 10000) {
+      throw new Error('Invalid reward in work data');
     }
 
     await set(workRef, workData);
@@ -1052,9 +1048,9 @@ export const submitWorkForCampaign = async (
       throw new Error('Work has already been submitted and is awaiting review');
     }
     
-    // Validate work data using imported validation function
-    if (!validateWorkData(workData)) {
-      throw new Error('Invalid work data');
+    // Validate work data
+    if (typeof workData.reward !== 'number' || workData.reward <= 0 || workData.reward > 10000) {
+      throw new Error('Invalid reward in work data');
     }
 
     // Update work with proof
@@ -1122,9 +1118,9 @@ export const rejectWorkAndRestoreCampaignBudget = async (
       throw new Error('Work is not in pending status');
     }
     
-    // Validate work data using imported validation function
-    if (!validateWorkData(workData)) {
-      throw new Error('Invalid work data');
+    // Validate work data
+    if (typeof workData.reward !== 'number' || workData.reward <= 0 || workData.reward > 10000) {
+      throw new Error('Invalid reward in work data');
     }
 
     // Update work status to rejected
@@ -1158,35 +1154,7 @@ export const rejectWorkAndRestoreCampaignBudget = async (
   }
 };
 
-// Utility function to fetch time-based leaderboard data
-export const fetchTimeBasedLeaderboard = async (
-  period: 'daily' | 'weekly' | 'monthly'
-): Promise<any> => {
-  const cacheKey = `leaderboard:${period}`;
-  
-  // Check cache first
-  const cached = dataCache.get(cacheKey);
-  if (cached) {
-    return cached;
-  }
 
-  // Fetch from database based on period
-  try {
-    const leaderboardRef = ref(database, `leaderboards/${period}`);
-    const snapshot = await get(leaderboardRef);
-    
-    if (snapshot.exists()) {
-      const data = snapshot.val();
-      dataCache.set(cacheKey, data);
-      return data;
-    }
-    
-    return null;
-  } catch (error) {
-    console.error(`Error fetching ${period} leaderboard:`, error);
-    throw error;
-  }
-};
 
 // Validation functions
 const validateWalletData = (data: any): data is WalletBalance => {
@@ -1231,11 +1199,6 @@ const validateTransactionData = (data: any): data is any => {
     typeof data.createdAt === 'number' && data.createdAt >= 0
   );
 };
-
-
-// Validation functions
-
-
 
 // Utility functions for common data fetching operations
 export const fetchUserData = async (uid: string): Promise<any> => {
@@ -1466,89 +1429,5 @@ export const clearUserCache = (uid: string): void => {
   dataCache.clear(`works:${uid}`);
 };
 
-// Utility function to fetch time-based leaderboard data
-const fetchTimeBasedLeaderboardV2 = async (
-timeframe: 'daily' | 'weekly' | 'monthly'): Promise<any[]> => {
-  // Validate input parameter
-  if (!timeframe || !['daily', 'weekly', 'monthly'].includes(timeframe)) {
-    throw new Error('Invalid timeframe provided. Must be daily, weekly, or monthly');
-  }
-  
-  const cacheKey = `leaderboard:${timeframe}`;
-  
-  // Check cache first
-  const cached = dataCache.get(cacheKey);
-  if (cached && !dataCache.isExpired(cacheKey)) {
-    return cached;
-  }
 
-  // Use race condition handling to prevent duplicate requests
-  return dataCache.getOrCreatePendingRequest(cacheKey, () => {
-    return get(ref(database, 'users'))
-      .then((snapshot) => {
-        if (!snapshot.exists()) {
-          return [];
-        }
-        
-        const users = snapshot.val();
-        if (!users) {
-          return [];
-        }
-        
-        // Calculate time thresholds based on timeframe
-        const now = Date.now();
-        let timeThreshold = 0;
-        
-        switch (timeframe) {
-          case 'daily':
-            timeThreshold = now - 24 * 60 * 60 * 1000; // 24 hours ago
-            break;
-          case 'weekly':
-            timeThreshold = now - 7 * 24 * 60 * 60 * 1000; // 7 days ago
-            break;
-          case 'monthly':
-            timeThreshold = now - 30 * 24 * 60 * 60 * 1000; // 30 days ago
-            break;
-        }
-        
-        // Convert users object to array and filter based on timeframe
-        const usersArray = Object.entries(users)
-          .filter(([uid, userData]: [string, any]) => {
-            // Filter based on timeframe if needed
-            // For now, we include all users but in a real implementation
-            // you would filter based on when they earned money or completed work
-            return userData && typeof userData === 'object';
-          })
-          .map(([uid, userData]: [string, any]) => ({
-            uid,
-            fullName: userData.fullName || userData.name || `User ${uid.substring(0, 8)}`,
-            profileImage: userData.profileImage || userData.avatar,
-            approvedWorks: userData.approvedWorks || 0,
-            earnedMoney: userData.earnedMoney || 0,
-          }));
-        
-        // Sort users by approved works (descending) and assign ranks
-        const sortedUsers = usersArray
-          .sort((a, b) => {
-            // Primary sort: approved works (descending)
-            if (b.approvedWorks !== a.approvedWorks) {
-              return b.approvedWorks - a.approvedWorks;
-            }
-            // Secondary sort: earned money (descending) as tiebreaker
-            return (b.earnedMoney || 0) - (a.earnedMoney || 0);
-          })
-          .map((user, index) => ({
-            ...user,
-            rank: index + 1,
-          }));
-        
-        // Cache the result
-        dataCache.set(cacheKey, sortedUsers);
-        return sortedUsers;
-      })
-      .catch((error) => {
-        console.error(`Error fetching ${timeframe} leaderboard:`, error);
-        throw error;
-      });
-  });
-};
+
